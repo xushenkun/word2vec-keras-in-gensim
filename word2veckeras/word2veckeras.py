@@ -3,32 +3,14 @@
 
 # Licensed under the GNU Affero General Public License, version 3 - http://www.gnu.org/licenses/agpl-3.0.html
 
-import math
+import sys
 from Queue import Queue
 
-from numpy import zeros, random, sum as np_sum, add as np_add, concatenate, \
-    repeat as np_repeat, array, float32 as REAL, empty, ones, memmap as np_memmap, \
-    sqrt, newaxis, ndarray, dot, vstack, dtype, divide as np_divide
-
-import gensim.models.word2vec 
-
-from six.moves import xrange, zip
-from six import string_types, integer_types, itervalues
-
-import sys
-import random
-
+import gensim.models.word2vec
 import numpy as np
-import copy
-
-import keras.constraints
-
-from keras.utils.np_utils import accuracy
-from keras.models import Graph,Sequential
-from keras.layers.core import Dense, Dropout, Activation, Merge, Flatten , Lambda
-from keras.layers.embeddings import Embedding
-from keras.optimizers import SGD
-from keras.objectives import mse
+from keras.layers import Input, Embedding, Lambda, merge, Reshape
+from keras.layers.core import Activation
+from keras.models import Model
 
 
 def queue_to_list(q,extract_size):
@@ -43,7 +25,6 @@ def queue_to_list(q,extract_size):
         l.append(q.get())
 
     return l
-
 
 
 def train_sg_pair(model, word, context_index, alpha=None, learn_vectors=True, learn_hidden=True,
@@ -101,10 +82,9 @@ def train_batch_sg(model, sentences, alpha=None, work=None,sub_batch_size=256,ba
                                     batch_count += 1
                                     sub_batch_count=0
                                 if batch_count >= batch_size :
-                                    yield { 'index':train_x0, 'point':train_x1, 'code':train_y}
+                                    yield ({'index': train_x0, 'point': train_x1}, {'code': train_y})
                                     batch_count=0
 
-        
 
 def build_keras_model_sg(index_size,vector_size,
                          context_size,
@@ -112,18 +92,25 @@ def build_keras_model_sg(index_size,vector_size,
                          sub_batch_size=256,
                          learn_vectors=True,learn_hidden=True,
                          model=None):
+    point_input = Input(shape=(sub_batch_size,), dtype='int32', name='point')
+    index_input = Input(shape=(sub_batch_size,), dtype='int32', name='index')
 
-    kerasmodel = Graph()
-    kerasmodel.add_input(name='point' , input_shape=(1,), dtype=int)
-    kerasmodel.add_input(name='index' , input_shape=(1,), dtype=int)
-    kerasmodel.add_node(Embedding(index_size, vector_size, input_length=sub_batch_size,weights=[model.syn0]),name='embedding', input='index')
-    kerasmodel.add_node(Embedding(context_size, vector_size, input_length=sub_batch_size,weights=[model.keras_syn1]),name='embedpoint', input='point')
-    kerasmodel.add_node(Lambda(lambda x:x.sum(2))   , name='merge',inputs=['embedding','embedpoint'], merge_mode='mul')
-    kerasmodel.add_node(Activation('sigmoid'), name='sigmoid', input='merge')
-    kerasmodel.add_output(name='code',input='sigmoid')
-    kerasmodel.compile('rmsprop', {'code':'mse'})
+    point_embedding = Embedding(
+        input_dim=context_size, output_dim=vector_size, input_length=sub_batch_size,
+        weights=[model.keras_syn1], name='embedpoint')(point_input)
+    index_embedding = Embedding(
+        input_dim=index_size, output_dim=vector_size, input_length=sub_batch_size,
+        weights=[model.syn0], name='embedding')(index_input)
+
+    merged_vectors = merge([index_embedding, point_embedding], mode='sum', name='merge')
+    average = Lambda(lambda x: x.sum(2), output_shape=(sub_batch_size,))(merged_vectors)
+
+    output = Activation(activation='sigmoid', name='code')(average)
+
+    kerasmodel = Model(input=[point_input, index_input], output=output)
+    kerasmodel.compile(optimizer='rmsprop', loss={'code': 'mse'})
+
     return kerasmodel
-
 
 
 def train_cbow_pair(model, word, input_word_indices, l=None, alpha=None, learn_vectors=True, learn_hidden=True):
@@ -153,6 +140,7 @@ def train_batch_cbow_xy_generator(model, sentences):
                 if xy !=None:
                     yield xy
 
+
 def train_batch_cbow(model, sentences, alpha=None, work=None, neu1=None,batch_size=256):
     w_len_queue_dict={}
     w_len_queue=[]
@@ -170,31 +158,41 @@ def train_batch_cbow(model, sentences, alpha=None, work=None, neu1=None,batch_si
                 if w_len_queue_dict[w_len].qsize() >= batch_size :
                     l=queue_to_list(w_len_queue_dict[w_len],batch_size)
                     train=[[e[i] for e in l] for i in range(3)]
-                    yield { 'index':np.array(train[0]),
-                            'point':np.array(train[1]),
-                            'code':np.array(train[2])}
+                    yield ({'index': np.array(train[0]), 'point': np.array(train[1])},
+                           {'code': np.array(train[2])})
 
-        
-def build_keras_model_cbow(index_size,vector_size,
-                           context_size,
+
+def build_keras_model_cbow(index_size, vector_size, context_size,
                            #code_dim,
                            sub_batch_size=1,
-                           model=None,cbow_mean=False):
- 
-    kerasmodel = Graph()
-    kerasmodel.add_input(name='point' , input_shape=(sub_batch_size,), dtype='int')
-    kerasmodel.add_input(name='index' , input_shape=(1,), dtype='int')
-    kerasmodel.add_node(Embedding(index_size, vector_size, weights=[model.syn0]),name='embedding', input='index')
-    kerasmodel.add_node(Embedding(context_size, vector_size, input_length=sub_batch_size,weights=[model.keras_syn1]),name='embedpoint', input='point')
+                           model=None, cbow_mean=False):
+    point_input = Input(shape=(sub_batch_size,), dtype='int32', name='point')
+    index_input = Input(shape=(None,), dtype='int32', name='index')
+
+    point_embedding = Embedding(
+        input_dim=context_size, output_dim=vector_size, input_length=sub_batch_size,
+        weights=[model.keras_syn1], name='embedpoint')(point_input)
+    index_embedding = Embedding(
+        input_dim=index_size, output_dim=vector_size, weights=[model.syn0], name='embedding')(index_input)
+
     if cbow_mean:
-        kerasmodel.add_node(Lambda(lambda x:x.mean(1),output_shape=(vector_size,)),name='average',input='embedding')
+        average = Lambda(lambda x: x.mean(1), output_shape=(vector_size,))(index_embedding)
     else:
-        kerasmodel.add_node(Lambda(lambda x:x.sum(1),output_shape=(vector_size,)),name='average',input='embedding')
-    
-    kerasmodel.add_node(Activation('sigmoid'), name='sigmoid',inputs=['average','embedpoint'], merge_mode='dot',dot_axes=-1)
-    kerasmodel.add_output(name='code',input='sigmoid')
-    kerasmodel.compile('rmsprop', {'code':'mse'})
+        average = Lambda(lambda x: x.sum(1), output_shape=(vector_size,))(index_embedding)
+
+    average = Reshape((vector_size, 1))(average)
+    point_embedding = Reshape((vector_size, 1))(point_embedding)
+
+    merged_vectors = merge([average, point_embedding], mode='dot', dot_axes=1)
+    merged_vectors = Reshape((1,))(merged_vectors)
+
+    output = Activation(activation='sigmoid', name='code')(merged_vectors)
+
+    kerasmodel = Model(input=[point_input, index_input], output=output)
+    kerasmodel.compile(optimizer='rmsprop', loss={'code': 'mse'})
+
     return kerasmodel
+
 
 def copy_word2vec_instance_from_to(w2v,w2v_to,sentences=None,documents=None):# ,dm=None, **kwargs):
         if hasattr(w2v,'dm'):
@@ -358,9 +356,9 @@ class Word2VecKeras(gensim.models.word2vec.Word2Vec):
                                                      sub_batch_size=sub_batch_size,
                                                      model=self
                                                      )
-                
+
             gen=train_batch_sg(self, sentences, sub_batch_size=sub_batch_size,batch_size=batch_size)
-            self.kerasmodel.nodes['embedding'].set_weights([self.syn0])
+            self.kerasmodel.get_layer(name='embedding').set_weights([self.syn0])
             self.kerasmodel.fit_generator(gen,samples_per_epoch=samples_per_epoch, nb_epoch=self.iter, verbose=0)
         else:
             samples_per_epoch=int(sum(map(len,sentences)))
@@ -373,15 +371,16 @@ class Word2VecKeras(gensim.models.word2vec.Word2Vec):
                                                        )
             gen=train_batch_cbow(self, sentences, self.alpha, work=None,batch_size=batch_size)
             self.kerasmodel.fit_generator(gen,samples_per_epoch=samples_per_epoch, nb_epoch=self.iter,verbose=0)
-        self.syn0=self.kerasmodel.nodes['embedding'].get_weights()[0]
-        if self.negative>0 and self.hs :
-            syn1tmp=self.kerasmodel.nodes['embedpoint'].get_weights()[0]
-            self.syn1=syn1tmp[0:len(self.vocab)]
-            self.syn1neg=syn1tmp[len(self.vocab):2*len(self.vocab)]
+
+        self.syn0 = self.kerasmodel.get_layer(name='embedding').get_weights()[0]
+        if self.negative > 0 and self.hs:
+            syn1tmp = self.kerasmodel.get_layer(name='embedpoint').get_weights()[0]
+            self.syn1 = syn1tmp[0:len(self.vocab)]
+            self.syn1neg = syn1tmp[len(self.vocab):2 * len(self.vocab)]
         elif self.hs:
-            self.syn1=self.kerasmodel.nodes['embedpoint'].get_weights()[0]
+            self.syn1 = self.kerasmodel.get_layer(name='embedpoint').get_weights()[0]
         else:
-            self.syn1neg=self.kerasmodel.nodes['embedpoint'].get_weights()[0]
+            self.syn1neg = self.kerasmodel.get_layer(name='embedpoint').get_weights()[0]
 
 
 if __name__ == "__main__":

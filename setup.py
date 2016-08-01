@@ -1,5 +1,5 @@
-from setuptools import setup
 from setuptools import find_packages
+from setuptools import setup
 
 setup(name='word2veckeras',
       version='0.0.5.2',
@@ -9,7 +9,7 @@ setup(name='word2veckeras',
       url='https://github.com/niitsuma/word2vec-keras-in-gensim',
       download_url='https://github.com/niitsuma/word2vec-keras-in-gensim/archive/master.zip',
       license='GNU Affero General Public License, version 3 - http://www.gnu.org/licenses/agpl-3.0.html',
-      install_requires=['gensim', 'theano', 'pyyaml', 'six', 'keras<=0.3.1'],
+      install_requires=['gensim', 'theano', 'pyyaml', 'six', 'keras'],
       #install_requires=['gensim', 'theano', 'pyyaml', 'six', 'keras', 'sklearn'],
       # extras_require={
       #     'h5py': ['h5py'],
