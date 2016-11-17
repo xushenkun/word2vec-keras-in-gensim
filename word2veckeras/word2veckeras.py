@@ -297,7 +297,10 @@ def train_prepossess(model):
 
         
 class Word2VecKeras(gensim.models.word2vec.Word2Vec):
-
+    def save(self, *args, **kwargs):
+        kwargs['ignore'] = kwargs.get('ignore', ['syn0norm', 'table', 'cum_table', 'kerasmodel'])
+        super(Word2VecKeras, self).save(*args, **kwargs)
+        
     def compare_w2v(self,w2v2):
         return np.mean([np.linalg.norm(self[w]-w2v2[w]) for w in self.vocab if w in w2v2.vocab])
 
