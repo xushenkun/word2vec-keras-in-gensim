@@ -120,9 +120,10 @@ def train_cbow_pair(model, word, input_word_indices, l=None, alpha=None, learn_v
     if model.negative:
         word_indices = [word.index]
         while len(word_indices) < model.negative + 1:
-            w = model.cum_table.searchsorted(model.random.randint(model.cum_table[-1]))
-            if w != word.index:
-                word_indices.append(w)
+            if hasattr(model, 'cum_table'):
+                w = model.cum_table.searchsorted(model.random.randint(model.cum_table[-1]))
+                if w != word.index:
+                    word_indices.append(w)
         for i,p in enumerate(word_indices):
             yield input_word_indices, [p+model.keras_context_negative_base_index], [model.neg_labels[i]]
 
